@@ -1,31 +1,22 @@
 document.addEventListener('DOMContentLoaded', () => {
-  const myHeaders = new Headers();
-  const button = document.querySelector('.button');
-  const video = document.querySelector('.video');
+  const endpoint =
+    'https://product-recognition-python.cognitiveservices.azure.com/';
+  const model = 'ms-pretrained-product-detection';
+  const key = '4aa4fa290d7548848861dc6fc88c6a3a';
   const canvas = document.querySelector('.canvas');
-  let i = 0;
+  const video = document.querySelector('.video');
+  const button = document.querySelector('.button');
+  let runNum = 0;
 
-  myHeaders.append(
-    'Ocp-Apim-Subscription-Key',
-    '4ebfdea9af9c43fa96841ca109eae82f'
-  );
+  const removeBoxes = () => {
+    const boxes = document.querySelectorAll('.box');
 
-  const renderCameraFeed = () => {
-    const video = document.querySelector('.video');
-
-    window.navigator.mediaDevices
-      .getUserMedia({ video: true })
-      .then((stream) => {
-        video.srcObject = stream;
-        video.onloadedmetadata = () => video.play();
-      })
-      .catch((error) => {
-        console.log('There was an error.');
-        console.error(error);
-      });
+    if (boxes.length >= 1) {
+      boxes.forEach((box) => box.remove());
+    }
   };
 
-  const renderBorder = (imageWidth, imageHeight, { boundingBox }) => {
+  const renderBox = (imageWidth, imageHeight, boundingBox) => {
     const wrapper = document.querySelector('.wrapper');
     const box = document.createElement('div');
 
@@ -38,121 +29,100 @@ document.addEventListener('DOMContentLoaded', () => {
     wrapper.appendChild(box);
   };
 
-  const getResults = () => {
-    myHeaders.append('Content-Type', 'application/json');
-
-    const requestOptions = {
-      method: 'GET',
-      headers: myHeaders,
-      redirect: 'follow',
-    };
-
-    fetch(
-      `https://test-computer-vision-resource.cognitiveservices.azure.com/computervision/productrecognition/ms-pretrained-product-detection/runs/test-2-${i}?api-version=2023-04-01-preview`,
-      requestOptions
-    )
-      .then((response) => {
-        console.log('Got a response.');
-        return response.json();
-      })
-      .then((result) => {
-        console.log('Got a result.');
-        console.log(result);
-
-        if (result?.status === 'succeeded') {
-          const { imageMetadata, products } = result.result;
-          const { width, height } = imageMetadata;
-
-          products.forEach((product) => renderBorder(width, height, product));
-        }
-      })
-      .catch((error) => {
-        console.log('There was an error.');
-        console.error(error);
-      });
+  const sendApiRequest = async (url, options) => {
+    const response = await fetch(url, options);
+    const result = await response.json();
+    return result;
   };
 
-  const analyzeImage = (blob) => {
-    let body;
+  const getRun = async (run) => {
+    const url = `${endpoint}computervision/productrecognition/${model}/runs/${run}?api-version=2023-04-01-preview`;
 
-    if (false) {
-      myHeaders.append('Content-Type', 'application/json');
-
-      const imageUrl =
-        'https://testworkspace4640503893.blob.core.windows.net/test-images/shelf-image-1.jpeg';
-
-      body = JSON.stringify({ url: imageUrl });
-    } else {
-      myHeaders.append('Content-Type', 'application/octet-stream');
-
-      body = blob;
-    }
-
-    const requestOptions = {
-      method: 'PUT',
-      headers: myHeaders,
-      body,
+    const options = {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        'Ocp-Apim-Subscription-Key': key,
+      },
       redirect: 'follow',
     };
 
-    fetch(
-      `https://test-computer-vision-resource.cognitiveservices.azure.com/computervision/productrecognition/ms-pretrained-product-detection/runs/test-2-${i}?api-version=2023-04-01-preview`,
-      requestOptions
-    )
-      .then((response) => {
-        console.log('Got a response.');
-        return response.json();
-      })
-      .then((result) => {
-        console.log('Got a result.');
-        console.log(result);
+    const result = await sendApiRequest(url, options);
 
-        if (result?.status === 'notStarted') {
-          setTimeout(getResults, 500);
-        } else if (result?.error?.code === 'AlreadyExists') {
-          getResults();
-        }
-      })
-      .catch((error) => {
-        console.log('There was an error.');
-        console.error(error);
+    console.log(result);
+
+    if (result.status === 'succeeded') {
+      const { imageMetadata, products } = result.result;
+      const { width, height } = imageMetadata;
+
+      removeBoxes();
+
+      products.forEach(({ boundingBox }) => {
+        renderBox(width, height, boundingBox);
       });
+    }
+
+    return result;
+  };
+
+  const createRun = async (blob) => {
+    const run = `test-29-${runNum}`;
+    const url = `${endpoint}computervision/productrecognition/${model}/runs/${run}?api-version=2023-04-01-preview`;
+
+    const options = {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Ocp-Apim-Subscription-Key': key,
+      },
+      body: blob,
+      redirect: 'follow',
+    };
+
+    const createRunResult = await sendApiRequest(url, options);
+
+    console.log(createRunResult);
+
+    if (!createRunResult.error) {
+      let status = createRunResult.status;
+
+      while (status !== 'succeeded' && status !== 'error') {
+        const getRunResult = await getRun(run);
+        status = getRunResult.error ? 'error' : getRunResult.status;
+      }
+
+      if (status === 'succeeded') {
+        console.log('Image analyzed.');
+
+        if (runNum <= 10) {
+          captureImage();
+          runNum++;
+        }
+      }
+    }
   };
 
   const captureImage = () => {
-    i++;
-
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
     canvas
       .getContext('2d')
       .drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
-    canvas.toBlob((blob) => {
-      const image = new Image();
-      const imageUrl = window.URL.createObjectURL(blob);
-      image.src = imageUrl;
-
-      analyzeImage(blob);
-    });
-
-    if (i <= 4) {
-      setTimeout(captureImage, 3000);
-    }
+    canvas.toBlob((blob) => createRun(blob));
   };
 
+  const handleVideoLoaded = () => {
+    video.play();
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    button.disabled = false;
+  };
+
+  video.addEventListener('loadeddata', handleVideoLoaded);
   button.addEventListener('click', captureImage);
 
-  renderCameraFeed();
-  // renderImage();
+  window.navigator.mediaDevices
+    .getUserMedia({ video: true })
+    .then((stream) => (video.srcObject = stream))
+    .catch((error) => console.error('Application Error:', error));
 });
 
-// const renderImage = () => {
-//   const wrapper = document.querySelector('.wrapper');
-//   const image = document.createElement('img');
-
-//   image.src = imageUrl;
-//   image.alt = '';
-
-//   wrapper.appendChild(image);
-// };
+// "Requests to the ProductRecognition_Get Operation under Computer Vision API (2023-04-01-preview) have exceeded call rate limit of your current ComputerVision F0 pricing tier. Please retry after 40 seconds. To increase your rate limit switch to a paid tier."
